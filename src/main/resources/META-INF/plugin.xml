@@ -1,0 +1,20 @@
+<idea-plugin>
+    <id>com.fixbew.phonesqlite</id>
+    <name>Phone SQLite Viewer</name>
+    <vendor>fixbew</vendor>
+
+    <description>
+        <![CDATA[
+        Simple Android phone SQLite viewer using adb and sqlite-jdbc.
+        ]]>
+    </description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+            id="Phone SQLite"
+            anchor="right"
+            factoryClass="com.fixbew.phonesqlite.PhoneSqliteToolWindowFactory"/>
+    </extensions>
+</idea-plugin>
