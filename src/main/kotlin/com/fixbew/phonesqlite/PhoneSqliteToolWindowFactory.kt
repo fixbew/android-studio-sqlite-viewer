@@ -786,17 +786,20 @@ class PhoneSqliteToolWindowFactory : ToolWindowFactory {
         val safeDir = shellQuote(directoryPath)
 
         val command = """
-            cd $safeDir 2>/dev/null || exit 1
+            dir=$safeDir
+            [ -d "${'$'}dir" ] || exit 1
 
-            for f in * .*; do
-                [ "${'$'}f" = "." ] && continue
-                [ "${'$'}f" = ".." ] && continue
-                [ ! -e "${'$'}f" ] && continue
+            for path in "${'$'}dir"/* "${'$'}dir"/.*; do
+                [ -e "${'$'}path" ] || continue
 
-                if [ -d "${'$'}f" ]; then
-                    echo "D|${'$'}f"
+                name="${'$'}{path##*/}"
+                [ "${'$'}name" = "." ] && continue
+                [ "${'$'}name" = ".." ] && continue
+
+                if [ -d "${'$'}path" ]; then
+                    echo "D|${'$'}name"
                 else
-                    echo "F|${'$'}f"
+                    echo "F|${'$'}name"
                 fi
             done
         """.trimIndent()
@@ -806,7 +809,7 @@ class PhoneSqliteToolWindowFactory : ToolWindowFactory {
                 adb,
                 "-s",
                 deviceSerial,
-                "shell",
+                "exec-out",
                 "run-as",
                 packageName,
                 "sh",
