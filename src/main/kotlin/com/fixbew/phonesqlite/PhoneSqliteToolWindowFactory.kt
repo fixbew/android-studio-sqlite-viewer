@@ -27,9 +27,8 @@ class PhoneSqliteToolWindowFactory : ToolWindowFactory {
 
         val packageField = JTextField("com.example.app")
 
-
         val filePathField = JTextField("databases/app.db")
-        val chooseFileButton = JButton("Choose file")
+        val browseAppFilesButton = JButton("Browse App Files")
 
         val startButton = JButton("Start")
 
@@ -63,7 +62,7 @@ class PhoneSqliteToolWindowFactory : ToolWindowFactory {
             row = 2,
             label = "File:",
             field = filePathField,
-            button = chooseFileButton
+            button = browseAppFilesButton
         )
 
         val startPanel = JPanel(BorderLayout())
@@ -107,77 +106,134 @@ class PhoneSqliteToolWindowFactory : ToolWindowFactory {
                 }
             )
         }
+    
+browseAppFilesButton.addActionListener {
+    val device = deviceCombo.selectedItem as? DeviceItem
+    val packageName = packageField.text.trim()
 
-        chooseFileButton.addActionListener {
-        val device = deviceCombo.selectedItem as? DeviceItem
-        val packageName = packageField.text.trim()
+    if (device == null) {
+        logArea.text = "Select device first"
+        return@addActionListener
+    }
 
-        if (device == null) {
-            logArea.text = "Select device first"
-            return@addActionListener
-        }
+    if (packageName.isBlank()) {
+        logArea.text = "Package name is empty"
+        return@addActionListener
+    }
 
-        if (packageName.isBlank()) {
-            logArea.text = "Package name is empty"
-            return@addActionListener
-        }
-
-        showDeviceFileChooser(
-            deviceSerial = device.serial,
-            packageName = packageName,
-            initialPath = filePathField.text.trim().ifBlank { "." },
-            logArea = logArea
-        ) { selectedPath ->
+    runInBackground(
+        logArea = logArea,
+        task = {
+            getAppRootDirectory(
+                deviceSerial = device.serial,
+                packageName = packageName
+            )
+        },
+        onSuccess = { appRoot ->
+            showAppFileExplorer(
+                deviceSerial = device.serial,
+                packageName = packageName,
+                appRoot = appRoot,
+                initialPath = filePathField.text.trim().ifBlank { appRoot },
+                logArea = logArea
+            ) { selectedPath ->
                 filePathField.text = selectedPath
             }
         }
+    )
+}
 
-        startButton.addActionListener {
-            val device = deviceCombo.selectedItem as? DeviceItem
-            val packageName = packageField.text.trim()
-            val deviceFilePath = filePathField.text.trim()
-            val sql = getActiveSql(queryTabs)
+startButton.addActionListener {
+    val device = deviceCombo.selectedItem as? DeviceItem
+    val packageName = packageField.text.trim()
+    val deviceFilePath = filePathField.text.trim()
+    val sql = getActiveSql(queryTabs)
 
-            if (device == null) {
-                logArea.text = "Select device first"
-                return@addActionListener
-            }
+    if (device == null) {
+        logArea.text = "Select device first"
+        return@addActionListener
+    }
 
-            if (packageName.isBlank()) {
-                logArea.text = "Package name is empty"
-                return@addActionListener
-            }
+    if (packageName.isBlank()) {
+        logArea.text = "Package name is empty"
+        return@addActionListener
+    }
 
-            if (deviceFilePath.isBlank()) {
-                logArea.text = "Select file first"
-                return@addActionListener
-            }
+    if (deviceFilePath.isBlank()) {
+        logArea.text = "Select file first"
+        return@addActionListener
+    }
 
-            if (sql.isBlank()) {
-                logArea.text = "SQL tab is empty"
-                return@addActionListener
-            }
+    if (sql.isBlank()) {
+        logArea.text = "SQL tab is empty"
+        return@addActionListener
+    }
 
-            runInBackground(
-                logArea = logArea,
-                task = {
-                   val localDbFile = pullFileFromDevice(
-                        deviceSerial = device.serial,
-                        packageName = packageName,
-                        deviceFilePath = deviceFilePath
-                    )
-
-                    executeSql(
-                        dbFile = localDbFile,
-                        sql = sql
-                    )
-                },
-                onSuccess = { result ->
-                    resultTableModel.setDataVector(result.rows, result.columns)
-                    logArea.text = result.message
-                }
+    runInBackground(
+        logArea = logArea,
+        task = {
+            val localDbFile = pullAppFileFromDevice(
+                deviceSerial = device.serial,
+                packageName = packageName,
+                deviceFilePath = deviceFilePath
             )
+
+            executeSql(
+                dbFile = localDbFile,
+                sql = sql
+            )
+        },
+        onSuccess = { result ->
+            resultTableModel.setDataVector(result.rows, result.columns)
+            logArea.text = result.message
         }
+    )
+}startButton.addActionListener {
+    val device = deviceCombo.selectedItem as? DeviceItem
+    val packageName = packageField.text.trim()
+    val deviceFilePath = filePathField.text.trim()
+    val sql = getActiveSql(queryTabs)
+
+    if (device == null) {
+        logArea.text = "Select device first"
+        return@addActionListener
+    }
+
+    if (packageName.isBlank()) {
+        logArea.text = "Package name is empty"
+        return@addActionListener
+    }
+
+    if (deviceFilePath.isBlank()) {
+        logArea.text = "Select file first"
+        return@addActionListener
+    }
+
+    if (sql.isBlank()) {
+        logArea.text = "SQL tab is empty"
+        return@addActionListener
+    }
+
+    runInBackground(
+        logArea = logArea,
+        task = {
+            val localDbFile = pullAppFileFromDevice(
+                deviceSerial = device.serial,
+                packageName = packageName,
+                deviceFilePath = deviceFilePath
+            )
+
+            executeSql(
+                dbFile = localDbFile,
+                sql = sql
+            )
+        },
+        onSuccess = { result ->
+            resultTableModel.setDataVector(result.rows, result.columns)
+            logArea.text = result.message
+        }
+    )
+}
 
         val content = ContentFactory.getInstance().createContent(rootSplit, "", false)
         toolWindow.contentManager.addContent(content)
@@ -783,6 +839,373 @@ private fun listDeviceFiles(
         return "adb"
     }
 
+private fun showAppFileExplorer(
+    deviceSerial: String,
+    packageName: String,
+    appRoot: String,
+    initialPath: String,
+    logArea: JTextArea,
+    onSelected: (String) -> Unit
+) {
+    val dialog = JDialog()
+    dialog.title = "App File Explorer"
+    dialog.setSize(800, 560)
+    dialog.setLocationRelativeTo(null)
+
+    val currentPathField = JTextField(initialPath)
+    val listModel = DefaultListModel<DeviceFileItem>()
+    val fileList = JList(listModel)
+
+    val appRootButton = JButton("App root")
+    val databasesButton = JButton("databases")
+    val filesButton = JButton("files")
+    val appFlutterButton = JButton("app_flutter")
+    val cacheButton = JButton("cache")
+    val sharedPrefsButton = JButton("shared_prefs")
+    val noBackupButton = JButton("no_backup")
+
+    val upButton = JButton("Up")
+    val refreshButton = JButton("Refresh")
+    val openButton = JButton("Open")
+    val selectButton = JButton("Select file")
+
+    fun loadDirectory(path: String) {
+        runInBackground(
+            logArea = logArea,
+            task = {
+                listAppFiles(
+                    deviceSerial = deviceSerial,
+                    packageName = packageName,
+                    directoryPath = path
+                )
+            },
+            onSuccess = { files ->
+                currentPathField.text = path
+                listModel.clear()
+
+                files.forEach {
+                    listModel.addElement(it)
+                }
+
+                logArea.text = "Opened: $path\nItems: ${files.size}"
+            }
+        )
+    }
+
+    fun openSelected() {
+        val selected = fileList.selectedValue ?: return
+
+        if (selected.isDirectory) {
+            loadDirectory(selected.path)
+        } else {
+            onSelected(selected.path)
+            dialog.dispose()
+        }
+    }
+
+    appRootButton.addActionListener {
+        loadDirectory(appRoot)
+    }
+
+    databasesButton.addActionListener {
+        loadDirectory("$appRoot/databases")
+    }
+
+    filesButton.addActionListener {
+        loadDirectory("$appRoot/files")
+    }
+
+    appFlutterButton.addActionListener {
+        loadDirectory("$appRoot/app_flutter")
+    }
+
+    cacheButton.addActionListener {
+        loadDirectory("$appRoot/cache")
+    }
+
+    sharedPrefsButton.addActionListener {
+        loadDirectory("$appRoot/shared_prefs")
+    }
+
+    noBackupButton.addActionListener {
+        loadDirectory("$appRoot/no_backup")
+    }
+
+    upButton.addActionListener {
+        loadDirectory(getParentDir(currentPathField.text.trim()))
+    }
+
+    refreshButton.addActionListener {
+        loadDirectory(currentPathField.text.trim())
+    }
+
+    openButton.addActionListener {
+        openSelected()
+    }
+
+    selectButton.addActionListener {
+        val selected = fileList.selectedValue ?: return@addActionListener
+
+        if (selected.isDirectory) {
+            logArea.text = "Selected item is directory, not file"
+            return@addActionListener
+        }
+
+        onSelected(selected.path)
+        dialog.dispose()
+    }
+
+    fileList.addMouseListener(object : java.awt.event.MouseAdapter() {
+        override fun mouseClicked(e: java.awt.event.MouseEvent) {
+            if (e.clickCount == 2) {
+                openSelected()
+            }
+        }
+    })
+
+    val pathPanel = JPanel(BorderLayout())
+    pathPanel.add(JLabel("Path:"), BorderLayout.WEST)
+    pathPanel.add(currentPathField, BorderLayout.CENTER)
+
+    val quickPanel = JPanel()
+    quickPanel.add(appRootButton)
+    quickPanel.add(databasesButton)
+    quickPanel.add(filesButton)
+    quickPanel.add(appFlutterButton)
+    quickPanel.add(cacheButton)
+    quickPanel.add(sharedPrefsButton)
+    quickPanel.add(noBackupButton)
+
+    val actionPanel = JPanel()
+    actionPanel.add(upButton)
+    actionPanel.add(refreshButton)
+    actionPanel.add(openButton)
+    actionPanel.add(selectButton)
+
+    val topPanel = JPanel(BorderLayout())
+    topPanel.add(pathPanel, BorderLayout.NORTH)
+    topPanel.add(quickPanel, BorderLayout.SOUTH)
+
+    val root = JPanel(BorderLayout())
+    root.add(topPanel, BorderLayout.NORTH)
+    root.add(JScrollPane(fileList), BorderLayout.CENTER)
+    root.add(actionPanel, BorderLayout.SOUTH)
+
+    dialog.contentPane = root
+    dialog.isVisible = true
+
+    loadDirectory(initialPath)
+}
+
+    private fun getAppRootDirectory(
+    deviceSerial: String,
+    packageName: String
+): String {
+    val adb = findAdb()
+
+    val result = runCommand(
+        listOf(
+            adb,
+            "-s",
+            deviceSerial,
+            "shell",
+            "run-as",
+            packageName,
+            "pwd"
+        )
+    )
+
+    if (result.exitCode != 0) {
+        throw RuntimeException(
+            """
+            Cannot get app root directory.
+            
+            adb output:
+            ${result.output}
+            
+            Possible reasons:
+            - wrong package name
+            - app is not debuggable
+            - device is not authorized
+            """.trimIndent()
+        )
+    }
+
+    return result.output.trim().ifBlank {
+        "/data/user/0/$packageName"
+    }
+}
+
+private fun listAppFiles(
+    deviceSerial: String,
+    packageName: String,
+    directoryPath: String
+): List<DeviceFileItem> {
+    val adb = findAdb()
+    val safeDir = shellQuote(directoryPath)
+
+    val command = """
+        cd $safeDir 2>/dev/null || exit 1
+
+        for f in * .*; do
+            [ "${'$'}f" = "." ] && continue
+            [ "${'$'}f" = ".." ] && continue
+            [ ! -e "${'$'}f" ] && continue
+
+            if [ -d "${'$'}f" ]; then
+                echo "D|${'$'}f"
+            else
+                echo "F|${'$'}f"
+            fi
+        done
+    """.trimIndent()
+
+    val result = runCommand(
+        listOf(
+            adb,
+            "-s",
+            deviceSerial,
+            "shell",
+            "run-as",
+            packageName,
+            "sh",
+            "-c",
+            command
+        )
+    )
+
+    if (result.exitCode != 0) {
+        throw RuntimeException(
+            """
+            Cannot open directory:
+            $directoryPath
+            
+            adb output:
+            ${result.output}
+            
+            Possible reasons:
+            - directory does not exist
+            - app is not debuggable
+            - wrong package name
+            """.trimIndent()
+        )
+    }
+
+    return result.output
+        .lineSequence()
+        .map { it.trim() }
+        .filter { it.contains("|") }
+        .mapNotNull { line ->
+            val parts = line.split("|", limit = 2)
+
+            if (parts.size != 2) {
+                return@mapNotNull null
+            }
+
+            val type = parts[0]
+            val name = parts[1]
+
+            DeviceFileItem(
+                name = name,
+                path = joinDevicePath(directoryPath, name),
+                isDirectory = type == "D"
+            )
+        }
+        .sortedWith(
+            compareBy<DeviceFileItem> { !it.isDirectory }
+                .thenBy { it.name.lowercase() }
+        )
+        .toList()
+}
+
+private fun pullAppFileFromDevice(
+    deviceSerial: String,
+    packageName: String,
+    deviceFilePath: String
+): File {
+    val tempDir = Files.createTempDirectory("phone-sqlite-").toFile()
+
+    val fileName = deviceFilePath
+        .substringAfterLast("/")
+        .ifBlank { "device-file.db" }
+
+    val localFile = File(tempDir, fileName)
+
+    pullAppFileViaRunAs(
+        deviceSerial = deviceSerial,
+        packageName = packageName,
+        remotePath = deviceFilePath,
+        outputFile = localFile,
+        required = true
+    )
+
+    pullAppFileViaRunAs(
+        deviceSerial = deviceSerial,
+        packageName = packageName,
+        remotePath = "$deviceFilePath-wal",
+        outputFile = File(tempDir, "$fileName-wal"),
+        required = false
+    )
+
+    pullAppFileViaRunAs(
+        deviceSerial = deviceSerial,
+        packageName = packageName,
+        remotePath = "$deviceFilePath-shm",
+        outputFile = File(tempDir, "$fileName-shm"),
+        required = false
+    )
+
+    return localFile
+}
+
+private fun pullAppFileViaRunAs(
+    deviceSerial: String,
+    packageName: String,
+    remotePath: String,
+    outputFile: File,
+    required: Boolean
+) {
+    val adb = findAdb()
+
+    val process = ProcessBuilder(
+        adb,
+        "-s",
+        deviceSerial,
+        "exec-out",
+        "run-as",
+        packageName,
+        "cat",
+        remotePath
+    )
+        .redirectOutput(outputFile)
+        .redirectError(ProcessBuilder.Redirect.PIPE)
+        .start()
+
+    val exitCode = process.waitFor()
+    val error = process.errorStream.bufferedReader().readText()
+
+    if (exitCode != 0) {
+        outputFile.delete()
+
+        if (required) {
+            throw RuntimeException(
+                """
+                Cannot pull app file:
+                $remotePath
+                
+                adb error:
+                $error
+                
+                Possible reasons:
+                - wrong package name
+                - app is not debuggable
+                - file does not exist
+                """.trimIndent()
+            )
+        }
+    }
+}
+    
     private fun <T> runInBackground(
         logArea: JTextArea,
         task: () -> T,
@@ -805,9 +1228,9 @@ private fun listDeviceFiles(
         }
     }
 
-    private fun joinDevicePath(dir: String, name: String): String {
-    if (dir == "." || dir.isBlank()) {
-        return name
+private fun joinDevicePath(dir: String, name: String): String {
+    if (dir == "/") {
+        return "/$name"
     }
 
     if (dir.endsWith("/")) {
@@ -819,12 +1242,12 @@ private fun listDeviceFiles(
 private fun getParentDir(path: String): String {
     val cleanPath = path.trim().trimEnd('/')
 
-    if (cleanPath.isBlank()) {
-        return "."
+    if (cleanPath.isBlank() || cleanPath == "/") {
+        return "/"
     }
 
     if (!cleanPath.contains("/")) {
-        return "."
+        return "/"
     }
 
     val parent = cleanPath.substringBeforeLast("/")
@@ -850,9 +1273,9 @@ private data class DeviceFileItem(
 ) {
     override fun toString(): String {
         return if (isDirectory) {
-            "📁 $name"
+            "[DIR] $name"
         } else {
-            "📄 $name"
+            "      $name"
         }
     }
 }
